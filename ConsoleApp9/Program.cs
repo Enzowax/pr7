@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using ConsoleApp9.Models;
 
 namespace MarketplaceApp
 {
@@ -186,11 +187,15 @@ namespace MarketplaceApp
 
         static void ShowOrders()
         {
-            List<Order> orders = db.GetUserOrders(currentUser.Id);
+            List<OrderItem> orders = db.GetUserOrders(currentUser.Id);
 
-            Console.WriteLine("История заказов");
+            Console.WriteLine("История заказов:");
             foreach (var o in orders)
-                Console.WriteLine($"{o.Id}. Товар {o.ProductId}, ПВЗ {o.PVZId}, Дата: {o.Date}");
+            {
+                Console.WriteLine($"{o.Id}. {o.ProductName} — {o.Price} руб., ПВЗ: {o.PVZAddress}, Дата: {o.Date}");
+            }
         }
+
+
     }
 }

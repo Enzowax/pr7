@@ -14,5 +14,4 @@ namespace ConsoleApp9.Models
         public string PasswordHash { get; set; }
         public DateTime CreatedAt { get; set; }
     }
-
 }

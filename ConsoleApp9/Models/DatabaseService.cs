@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.Security.Cryptography;
 using System.Text;
+using ConsoleApp9.Models;
 
 namespace MarketplaceApp
 {
@@ -51,7 +52,6 @@ namespace MarketplaceApp
                 cmd.Parameters.AddWithValue("@u", username);
                 cmd.Parameters.AddWithValue("@p", HashPassword(password));
                 cmd.Parameters.AddWithValue("@e", email);
-
                 return cmd.ExecuteNonQuery() > 0;
             }
         }
@@ -194,43 +194,73 @@ namespace MarketplaceApp
             using (SqlConnection conn = new SqlConnection(_connectionString))
             {
                 conn.Open();
-                SqlCommand cmd = new SqlCommand(
-                    "INSERT INTO Orders (UserId, ProductId, PVZId, Date) VALUES (@u,@p,@z,GETDATE())", conn);
-                cmd.Parameters.AddWithValue("@u", userId);
-                cmd.Parameters.AddWithValue("@p", productId);
-                cmd.Parameters.AddWithValue("@z", pvzId);
-                cmd.ExecuteNonQuery();
+
+
+                SqlCommand cmdOrder = new SqlCommand(
+                    "INSERT INTO Orders (UserId, PVZId, Date) VALUES (@u,@z,GETDATE()); SELECT SCOPE_IDENTITY();", conn);
+                cmdOrder.Parameters.AddWithValue("@u", userId);
+                cmdOrder.Parameters.AddWithValue("@z", pvzId);
+                int orderId = Convert.ToInt32(cmdOrder.ExecuteScalar());
+
+                SqlCommand cmdProd = new SqlCommand(
+                    "SELECT Name, Price FROM Products WHERE Id=@p", conn);
+                cmdProd.Parameters.AddWithValue("@p", productId);
+                SqlDataReader reader = cmdProd.ExecuteReader();
+                if (!reader.Read()) { reader.Close(); return; }
+                string name = reader["Name"].ToString();
+                decimal price = (decimal)reader["Price"];
+                reader.Close();
+
+                SqlCommand cmdItem = new SqlCommand(
+                    "INSERT INTO OrderItems (OrderId, ProductId, Quantity, Price) VALUES (@oid,@pid,1,@pr)", conn);
+                cmdItem.Parameters.AddWithValue("@oid", orderId);
+                cmdItem.Parameters.AddWithValue("@pid", productId);
+                cmdItem.Parameters.AddWithValue("@pr", price);
+                cmdItem.ExecuteNonQuery();
             }
         }
 
-        public List<Order> GetUserOrders(int userId)
+        public List<OrderItem> GetUserOrders(int userId)
         {
-            List<Order> orders = new List<Order>();
+            List<OrderItem> orders = new List<OrderItem>();
+
             using (SqlConnection conn = new SqlConnection(_connectionString))
             {
                 conn.Open();
-                SqlCommand cmd = new SqlCommand(
-                    "SELECT * FROM Orders WHERE UserId=@u ORDER BY Date DESC", conn);
+                SqlCommand cmd = new SqlCommand(@"
+            SELECT o.Id AS OrderId, o.ProductId, o.PVZId, o.Date,
+                   p.Name AS ProductName, p.Price AS ProductPrice,
+                   pv.Address AS PVZAddress
+            FROM Orders o
+            JOIN Products p ON o.ProductId = p.Id
+            JOIN PickupPoints pv ON o.PVZId = pv.Id
+            WHERE o.UserId = @u
+            ORDER BY o.Date DESC", conn);
+
                 cmd.Parameters.AddWithValue("@u", userId);
+
                 SqlDataReader reader = cmd.ExecuteReader();
+
                 while (reader.Read())
                 {
-                    orders.Add(new Order
+                    orders.Add(new OrderItem
                     {
-                        Id = (int)reader["Id"],
+                        Id = (int)reader["OrderId"],
+                        OrderId = (int)reader["OrderId"],
                         ProductId = (int)reader["ProductId"],
+                        ProductName = reader["ProductName"].ToString(),
+                        Price = (decimal)reader["ProductPrice"],
                         PVZId = (int)reader["PVZId"],
+                        PVZAddress = reader["PVZAddress"].ToString(),
                         Date = (DateTime)reader["Date"]
                     });
                 }
+
                 reader.Close();
             }
+
             return orders;
         }
-    }
 
-    public class User { public int Id; public string Username; public string Email; public string PasswordHash; public DateTime CreatedAt; }
-    public class Product { public int Id; public string Name; public decimal Price; }
-    public class PVZ { public int Id; public string Name; public string Address; }
-    public class Order { public int Id; public int ProductId; public int PVZId; public DateTime Date; }
+    }
 }
