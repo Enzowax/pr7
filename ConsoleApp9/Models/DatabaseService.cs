@@ -3,304 +3,234 @@ using System.Collections.Generic;
 using System.Data.SqlClient;
 using System.Security.Cryptography;
 using System.Text;
-using System.Linq;
-using ConsoleApp9.Models;
 
-public class DatabaseService
+namespace MarketplaceApp
 {
-    private readonly string _connectionString;
-
-    public DatabaseService(string connectionString)
+    public class DatabaseService
     {
-        _connectionString = connectionString;
-    }
+        private readonly string _connectionString;
 
-    private string HashPassword(string password)
-    {
-        using (var sha = SHA256.Create())
+        public DatabaseService(string connectionString)
         {
-            var bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(password));
-            return BitConverter.ToString(bytes).Replace("-", "").ToLower();
+            _connectionString = connectionString;
         }
-    }
 
-    public bool RegisterUser(string username, string password, string email)
-    {
-        using (var conn = new SqlConnection(_connectionString))
+        private string HashPassword(string password)
         {
-            conn.Open();
-
-            using (var checkCmd = new SqlCommand(
-                "SELECT COUNT(*) FROM Users WHERE Username=@u OR Email=@e", conn))
+            using (SHA256 sha = SHA256.Create())
             {
-                checkCmd.Parameters.AddWithValue("@u", username);
-                checkCmd.Parameters.AddWithValue("@e", email);
-
-                if ((int)checkCmd.ExecuteScalar() > 0)
-                    return false;
+                byte[] bytes = sha.ComputeHash(Encoding.UTF8.GetBytes(password));
+                StringBuilder sb = new StringBuilder();
+                foreach (var b in bytes)
+                    sb.Append(b.ToString("x2"));
+                return sb.ToString();
             }
+        }
 
-            using (var cmd = new SqlCommand(
-                "INSERT INTO Users (Username, PasswordHash, Email, CreatedAt) VALUES (@u, @p, @e, GETDATE())",
-                conn))
+        public bool UserExists(string username)
+        {
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand("SELECT COUNT(*) FROM Users WHERE Username=@u", conn);
+                cmd.Parameters.AddWithValue("@u", username);
+                return (int)cmd.ExecuteScalar() > 0;
+            }
+        }
+
+        public bool CreateUser(string username, string password, string email = "example@email.com")
+        {
+            if (UserExists(username)) return false;
+
+            using (SqlConnection conn = new SqlConnection(_connectionString))
+            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    "INSERT INTO Users (Username, PasswordHash, Email, CreatedAt) VALUES (@u, @p, @e, GETDATE())",
+                    conn);
                 cmd.Parameters.AddWithValue("@u", username);
                 cmd.Parameters.AddWithValue("@p", HashPassword(password));
                 cmd.Parameters.AddWithValue("@e", email);
+
                 return cmd.ExecuteNonQuery() > 0;
             }
         }
-    }
 
-    public User Login(string username, string password)
-    {
-        using (var conn = new SqlConnection(_connectionString))
+        public User AuthUser(string username, string password)
         {
-            conn.Open();
-
-            using (var cmd = new SqlCommand(
-                "SELECT * FROM Users WHERE Username=@u", conn))
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand("SELECT * FROM Users WHERE Username=@u", conn);
                 cmd.Parameters.AddWithValue("@u", username);
 
-                using (var r = cmd.ExecuteReader())
+                SqlDataReader reader = cmd.ExecuteReader();
+                if (!reader.Read())
                 {
-                    if (!r.Read()) return null;
-
-                    string storedHash = r["PasswordHash"].ToString();
-                    string inputHash = HashPassword(password);
-
-                    if (storedHash != inputHash) return null;
-
-                    return new User
-                    {
-                        Id = (int)r["Id"],
-                        Username = r["Username"].ToString(),
-                        Email = r["Email"].ToString(),
-                        PasswordHash = storedHash,
-                        CreatedAt = (DateTime)r["CreatedAt"]
-                    };
+                    reader.Close();
+                    return null;
                 }
+
+                string storedHash = reader["PasswordHash"].ToString();
+                if (storedHash != HashPassword(password))
+                {
+                    reader.Close();
+                    return null;
+                }
+
+                User user = new User
+                {
+                    Id = (int)reader["Id"],
+                    Username = reader["Username"].ToString(),
+                    Email = reader["Email"].ToString(),
+                    PasswordHash = storedHash,
+                    CreatedAt = (DateTime)reader["CreatedAt"]
+                };
+
+                reader.Close();
+                return user;
             }
         }
-    }
 
-    public List<Product> GetAllProducts()
-    {
-        var list = new List<Product>();
-
-        using (var conn = new SqlConnection(_connectionString))
+        public List<Product> GetProducts()
         {
-            conn.Open();
-
-            string sql = @"
-                SELECT p.*, c.Name AS CategoryName
-                FROM Products p
-                JOIN Categories c ON p.CategoryId = c.Id";
-
-            using (var cmd = new SqlCommand(sql, conn))
-            using (var r = cmd.ExecuteReader())
+            List<Product> list = new List<Product>();
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
-                while (r.Read())
+                conn.Open();
+                SqlCommand cmd = new SqlCommand("SELECT * FROM Products", conn);
+                SqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
                     list.Add(new Product
                     {
-                        Id = (int)r["Id"],
-                        Name = r["Name"].ToString(),
-                        Description = r["Description"].ToString(),
-                        Price = (decimal)r["Price"],
-                        CategoryId = (int)r["CategoryId"],
-                        StockQuantity = (int)r["StockQuantity"],
-                        CategoryName = r["CategoryName"].ToString()
+                        Id = (int)reader["Id"],
+                        Name = reader["Name"].ToString(),
+                        Price = (decimal)reader["Price"]
                     });
                 }
+                reader.Close();
             }
+            return list;
         }
 
-        return list;
-    }
-
-    public bool AddToCart(int userId, int productId, int quantity = 1)
-    {
-        using (var conn = new SqlConnection(_connectionString))
+        public void AddToCart(int userId, int productId)
         {
-            conn.Open();
-
-            int stock = 0;
-
-            using (var checkCmd = new SqlCommand(
-                "SELECT StockQuantity FROM Products WHERE Id=@id", conn))
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
-                checkCmd.Parameters.AddWithValue("@id", productId);
-                var result = checkCmd.ExecuteScalar();
-                if (result == null) return false;
-                stock = (int)result;
-            }
-
-            if (stock < quantity) return false;
-
-            int cartId = 0;
-            int oldQty = 0;
-
-            using (var existCmd = new SqlCommand(
-                "SELECT Id, Quantity FROM Cart WHERE UserId=@u AND ProductId=@p", conn))
-            {
-                existCmd.Parameters.AddWithValue("@u", userId);
-                existCmd.Parameters.AddWithValue("@p", productId);
-
-                using (var r = existCmd.ExecuteReader())
-                {
-                    if (r.Read())
-                    {
-                        cartId = (int)r["Id"];
-                        oldQty = (int)r["Quantity"];
-                    }
-                }
-            }
-
-            if (cartId > 0)
-            {
-                using (var updateCmd = new SqlCommand(
-                    "UPDATE Cart SET Quantity=@q WHERE Id=@id", conn))
-                {
-                    updateCmd.Parameters.AddWithValue("@q", oldQty + quantity);
-                    updateCmd.Parameters.AddWithValue("@id", cartId);
-                    return updateCmd.ExecuteNonQuery() > 0;
-                }
-            }
-            else
-            {
-                using (var insertCmd = new SqlCommand(
-                    "INSERT INTO Cart (UserId, ProductId, Quantity) VALUES (@u, @p, @q)", conn))
-                {
-                    insertCmd.Parameters.AddWithValue("@u", userId);
-                    insertCmd.Parameters.AddWithValue("@p", productId);
-                    insertCmd.Parameters.AddWithValue("@q", quantity);
-                    return insertCmd.ExecuteNonQuery() > 0;
-                }
-            }
-        }
-    }
-
-    public List<CartItem> GetUserCart(int userId)
-    {
-        var list = new List<CartItem>();
-
-        using (var conn = new SqlConnection(_connectionString))
-        {
-            conn.Open();
-
-            string sql = @"
-                SELECT c.Id, c.ProductId, c.Quantity,
-                       p.Name, p.Price
-                FROM Cart c
-                JOIN Products p ON p.Id = c.ProductId
-                WHERE c.UserId = @u";
-
-            using (var cmd = new SqlCommand(sql, conn))
-            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    "INSERT INTO Cart (UserId, ProductId) VALUES (@u,@p)", conn);
                 cmd.Parameters.AddWithValue("@u", userId);
-
-                using (var r = cmd.ExecuteReader())
-                {
-                    while (r.Read())
-                    {
-                        list.Add(new CartItem
-                        {
-                            Id = (int)r["Id"],
-                            ProductId = (int)r["ProductId"],
-                            Quantity = (int)r["Quantity"],
-                            ProductName = r["Name"].ToString(),
-                            ProductPrice = (decimal)r["Price"],
-                            UserId = userId
-                        });
-                    }
-                }
+                cmd.Parameters.AddWithValue("@p", productId);
+                cmd.ExecuteNonQuery();
             }
         }
 
-        return list;
-    }
-
-    public bool CreateOrder(int userId, int pickupPointId, List<CartItem> cartItems)
-    {
-        using (var conn = new SqlConnection(_connectionString))
+        public List<Product> GetCart(int userId)
         {
-            conn.Open();
-            using (var tran = conn.BeginTransaction())
+            List<Product> cart = new List<Product>();
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
-                try
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    @"SELECT p.Id, p.Name, p.Price 
+                      FROM Cart c 
+                      JOIN Products p ON p.Id = c.ProductId 
+                      WHERE c.UserId=@u", conn);
+                cmd.Parameters.AddWithValue("@u", userId);
+                SqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
-                    int orderId;
-
-                    using (var cmd = new SqlCommand(
-                        "INSERT INTO Orders (UserId, PickupPointId, TotalAmount, OrderDate, Status) " +
-                        "VALUES (@u, @p, @t, GETDATE(), 'CREATED'); SELECT SCOPE_IDENTITY();",
-                        conn, tran))
+                    cart.Add(new Product
                     {
-                        cmd.Parameters.AddWithValue("@u", userId);
-                        cmd.Parameters.AddWithValue("@p", pickupPointId);
-                        cmd.Parameters.AddWithValue("@t", cartItems.Sum(c => c.TotalPrice));
-
-                        orderId = Convert.ToInt32(cmd.ExecuteScalar());
-                    }
-
-                    foreach (var item in cartItems)
-                    {
-                        using (var itemCmd = new SqlCommand(
-                            "INSERT INTO OrderItems (OrderId, ProductId, Quantity, Price) VALUES (@o, @pr, @q, @price)",
-                            conn, tran))
-                        {
-                            itemCmd.Parameters.AddWithValue("@o", orderId);
-                            itemCmd.Parameters.AddWithValue("@pr", item.ProductId);
-                            itemCmd.Parameters.AddWithValue("@q", item.Quantity);
-                            itemCmd.Parameters.AddWithValue("@price", item.ProductPrice);
-                            itemCmd.ExecuteNonQuery();
-                        }
-                    }
-
-                    using (var clearCmd = new SqlCommand(
-                        "DELETE FROM Cart WHERE UserId=@u", conn, tran))
-                    {
-                        clearCmd.Parameters.AddWithValue("@u", userId);
-                        clearCmd.ExecuteNonQuery();
-                    }
-
-                    tran.Commit();
-                    return true;
+                        Id = (int)reader["Id"],
+                        Name = reader["Name"].ToString(),
+                        Price = (decimal)reader["Price"]
+                    });
                 }
-                catch
-                {
-                    tran.Rollback();
-                    return false;
-                }
+                reader.Close();
+            }
+            return cart;
+        }
+
+        public void RemoveFromCart(int userId, int productId)
+        {
+            using (SqlConnection conn = new SqlConnection(_connectionString))
+            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    "DELETE FROM Cart WHERE UserId=@u AND ProductId=@p", conn);
+                cmd.Parameters.AddWithValue("@u", userId);
+                cmd.Parameters.AddWithValue("@p", productId);
+                cmd.ExecuteNonQuery();
             }
         }
-    }
 
-    public List<PVZ> GetAllPVZ()
-    {
-        var list = new List<PVZ>();
-
-        using (var conn = new SqlConnection(_connectionString))
+        public List<PVZ> GetPVZ()
         {
-            conn.Open();
-
-            using (var cmd = new SqlCommand("SELECT * FROM PickupPoints", conn))
-            using (var r = cmd.ExecuteReader())
+            List<PVZ> list = new List<PVZ>();
+            using (SqlConnection conn = new SqlConnection(_connectionString))
             {
-                while (r.Read())
+                conn.Open();
+                SqlCommand cmd = new SqlCommand("SELECT * FROM PickupPoints", conn);
+                SqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
                 {
                     list.Add(new PVZ
                     {
-                        Id = (int)r["Id"],
-                        Name = r["Name"].ToString(),
-                        Address = r["Address"].ToString()
+                        Id = (int)reader["Id"],
+                        Name = reader["Name"].ToString(),
+                        Address = reader["Address"].ToString()
                     });
                 }
+                reader.Close();
+            }
+            return list;
+        }
+
+        public void CreateOrder(int userId, int productId, int pvzId)
+        {
+            using (SqlConnection conn = new SqlConnection(_connectionString))
+            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    "INSERT INTO Orders (UserId, ProductId, PVZId, Date) VALUES (@u,@p,@z,GETDATE())", conn);
+                cmd.Parameters.AddWithValue("@u", userId);
+                cmd.Parameters.AddWithValue("@p", productId);
+                cmd.Parameters.AddWithValue("@z", pvzId);
+                cmd.ExecuteNonQuery();
             }
         }
 
-        return list;
+        public List<Order> GetUserOrders(int userId)
+        {
+            List<Order> orders = new List<Order>();
+            using (SqlConnection conn = new SqlConnection(_connectionString))
+            {
+                conn.Open();
+                SqlCommand cmd = new SqlCommand(
+                    "SELECT * FROM Orders WHERE UserId=@u ORDER BY Date DESC", conn);
+                cmd.Parameters.AddWithValue("@u", userId);
+                SqlDataReader reader = cmd.ExecuteReader();
+                while (reader.Read())
+                {
+                    orders.Add(new Order
+                    {
+                        Id = (int)reader["Id"],
+                        ProductId = (int)reader["ProductId"],
+                        PVZId = (int)reader["PVZId"],
+                        Date = (DateTime)reader["Date"]
+                    });
+                }
+                reader.Close();
+            }
+            return orders;
+        }
     }
+
+    public class User { public int Id; public string Username; public string Email; public string PasswordHash; public DateTime CreatedAt; }
+    public class Product { public int Id; public string Name; public decimal Price; }
+    public class PVZ { public int Id; public string Name; public string Address; }
+    public class Order { public int Id; public int ProductId; public int PVZId; public DateTime Date; }
 }
