@@ -197,10 +197,12 @@ namespace MarketplaceApp
 
 
                 SqlCommand cmdOrder = new SqlCommand(
-                    "INSERT INTO Orders (UserId, PVZId, Date) VALUES (@u,@z,GETDATE()); SELECT SCOPE_IDENTITY();", conn);
+                    "INSERT INTO Orders (UserId, PVZId, ProductId, Date) VALUES (@u,@z,@p,GETDATE()); SELECT SCOPE_IDENTITY();", conn);
                 cmdOrder.Parameters.AddWithValue("@u", userId);
                 cmdOrder.Parameters.AddWithValue("@z", pvzId);
+                cmdOrder.Parameters.AddWithValue("@p", productId);
                 int orderId = Convert.ToInt32(cmdOrder.ExecuteScalar());
+
 
                 SqlCommand cmdProd = new SqlCommand(
                     "SELECT Name, Price FROM Products WHERE Id=@p", conn);
@@ -212,10 +214,13 @@ namespace MarketplaceApp
                 reader.Close();
 
                 SqlCommand cmdItem = new SqlCommand(
-                    "INSERT INTO OrderItems (OrderId, ProductId, Quantity, Price) VALUES (@oid,@pid,1,@pr)", conn);
+                    "INSERT INTO OrderItems (OrderId, ProductId, Quantity, Price, ProductName, PVZId) " +
+                    "VALUES (@oid,@pid,1,@pr,@name,@pvz)", conn);
                 cmdItem.Parameters.AddWithValue("@oid", orderId);
                 cmdItem.Parameters.AddWithValue("@pid", productId);
                 cmdItem.Parameters.AddWithValue("@pr", price);
+                cmdItem.Parameters.AddWithValue("@name", name);
+                cmdItem.Parameters.AddWithValue("@pvz", pvzId);
                 cmdItem.ExecuteNonQuery();
             }
         }
