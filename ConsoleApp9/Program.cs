@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace MarketplaceApp
@@ -14,7 +14,7 @@ namespace MarketplaceApp
             {
                 if (currentUser == null)
                 {
-                    Console.WriteLine("МАРКЕТПЛЕЙС");
+                    Console.WriteLine("Маркетплейс Нагиева");
                     Console.WriteLine("1. Регистрация");
                     Console.WriteLine("2. Вход");
                     Console.WriteLine("3. Посмотреть товары");
