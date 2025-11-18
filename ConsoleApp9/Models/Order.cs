@@ -9,10 +9,10 @@ namespace ConsoleApp9.Models
     public class Order
     {
         public int Id { get; set; }
-        public int PVZId { get; set; }
-        public string PVZAddress { get; set; }
-        public DateTime Date { get; set; }
-        public List<OrderItem> Items { get; set; } = new List<OrderItem>();
+        public decimal TotalPrice { get; set; } 
+        public DateTime CreatedAt { get; set; }
+        public int PickupPointId { get; set; }
+        public List<OrderItem> Items { get; set; }
     }
-
 }
+

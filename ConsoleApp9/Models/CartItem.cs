@@ -11,9 +11,8 @@ namespace ConsoleApp9.Models
         public int Id { get; set; }
         public int UserId { get; set; }
         public int ProductId { get; set; }
-        public int Quantity { get; set; }
         public string ProductName { get; set; }
         public decimal ProductPrice { get; set; }
-        public decimal TotalPrice => ProductPrice * Quantity;
+        public int Quantity { get; set; }
     }
 }

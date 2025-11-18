@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace ConsoleApp9.Models
 {
-    public class PVZ
+    public class PickupPoint
     {
         public int Id { get; set; }
         public string Name { get; set; }
