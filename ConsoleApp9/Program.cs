@@ -1,408 +1,217 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
-using System.Data.SqlClient;
+using System.Net;
+using ConsoleApp9.Models;
 
-namespace AutoServiceSimple
+namespace MarketplaceApp
 {
     class Program
     {
-        private const string connectionString = @"Data Source=localhost;Initial Catalog=AutoServiceDB;Integrated Security=True;";
+        static DatabaseService db = new DatabaseService(@"Data Source=DESKTOP-DI2A3F9;Initial Catalog=MarketplaceDB;Integrated Security=True;");
+        static User currentUser = null;
 
         static void Main(string[] args)
         {
-            Console.OutputEncoding = System.Text.Encoding.UTF8;
-            var db = new DbHelper(connectionString);
-            decimal balance = db.GetBalance();
-
             while (true)
             {
-                Console.WriteLine();
-                Console.WriteLine("Автосервис");
-                Console.WriteLine("1 — Работа (принять клиента / отремонтировать)");
-                Console.WriteLine("2 — Склад (посмотреть запасы)");
-                Console.WriteLine("3 — Покупка (купить деталь)");
-                Console.WriteLine("0 — Выход");
-                Console.Write("Выберите действие: ");
-                var choice = Console.ReadLine();
-
-                if (choice == "1")
+                if (currentUser == null)
                 {
-                    var car = db.GetRandomCar();
-                    if (car == null)
-                    {
-                        Console.WriteLine("Нет клиентов в базе и/или нет деталей в справочнике.");
-                        continue;
-                    }
+                    Console.WriteLine("Маркетплейс Нагиева");
+                    Console.WriteLine("1. Посмотреть товары");
+                    Console.WriteLine("2. Регистрация");
+                    Console.WriteLine("3. Вход");
+                    Console.WriteLine("0. Выход");
+                    Console.Write("Выбор: ");
+                    string choice = Console.ReadLine();
 
-                    Console.WriteLine($"\nКлиент привёз: {car.Model} ({car.LicensePlate})");
-                    Console.WriteLine($"Сломанная деталь: {car.BrokenPartName} (PartId={car.BrokenPartId})");
-                    Console.WriteLine($"Цена ремонта (что клиент готов заплатить): {car.RepairPrice:C}");
-                    Console.Write("Ремонтировать? (да/нет): ");
-                    var ans = Console.ReadLine();
-
-                    if (IsYes(ans))
-                    {
-                        var inv = db.GetInventoryItemByPartId(car.BrokenPartId);
-                        if (inv != null && inv.Quantity > 0)
-                        {
-                            db.DecreaseInventory(car.BrokenPartId, 1);
-                            db.AddTransaction(car.RepairPrice, "RepairIncome", $"Ремонт {car.BrokenPartName}");
-                            balance += car.RepairPrice;
-                            db.InsertGameState(balance);
-                            Console.WriteLine($"Ремонт выполнен. Баланс: {balance:C}");
-                        }
-                        else
-                        {
-                            Console.WriteLine("Нужной детали нет на складе.");
-                            Console.WriteLine("1 - Купить сейчас и установить (спишется сразу)");
-                            Console.WriteLine("2 - Отказать (штраф)");
-                            Console.Write("Выберите: ");
-                            var c = Console.ReadLine();
-
-                            if (c == "1")
-                            {
-                                var part = db.GetPartById(car.BrokenPartId);
-                                if (part == null)
-                                {
-                                    Console.WriteLine("Деталь не найдена в каталоге. Отказ.");
-                                    ApplyPenalty(db, ref balance, 300m);
-                                }
-                                else
-                                {
-                                    if (balance < part.PurchasePrice)
-                                    {
-                                        Console.WriteLine($"Недостаточно денег для покупки (нужно {part.PurchasePrice:C}, у вас {balance:C}). Отказ.");
-                                        ApplyPenalty(db, ref balance, 300m);
-                                    }
-                                    else
-                                    {
-                                        balance -= part.PurchasePrice;
-                                        db.InsertGameState(balance);
-                                        db.AddTransaction(-part.PurchasePrice, "PurchaseExpense", $"Покупка {part.Name} x1");
-                                        db.IncreaseInventory(part.PartId, 1);
-
-                                        db.DecreaseInventory(part.PartId, 1);
-                                        db.AddTransaction(car.RepairPrice, "RepairIncome", $"Ремонт {car.BrokenPartName}");
-                                        balance += car.RepairPrice;
-                                        db.InsertGameState(balance);
-
-                                        Console.WriteLine($"Куплена деталь и выполнен ремонт. Баланс: {balance:C}");
-                                    }
-                                }
-                            }
-                            else if (c == "2")
-                            {
-                                ApplyPenalty(db, ref balance, 300m);
-                            }
-                            else
-                            {
-                                Console.WriteLine("Неверный выбор — считается отказом.");
-                                ApplyPenalty(db, ref balance, 300m);
-                            }
-                        }
-                    }
-                    else
-                    {
-                        Console.WriteLine("Вы отказались ремонтировать (клиент уехал). Штраф 300 руб.");
-                        ApplyPenalty(db, ref balance, 300m);
-                    }
-                }
-                else if (choice == "2")
-                {
-                    Console.WriteLine("\nСклад");
-                    var inv = db.GetInventory();
-                    if (inv.Count == 0) Console.WriteLine("Склад пуст.");
-                    foreach (var it in inv)
-                    {
-                        Console.WriteLine($"PartId={it.PartId} | {it.PartName} — {it.Quantity} шт.");
-                    }
-                }
-                else if (choice == "3")
-                {
-                    Console.WriteLine("\nКаталог деталей");
-                    var parts = db.GetAllParts();
-                    foreach (var p in parts)
-                    {
-                        Console.WriteLine($"{p.PartId}. {p.Name} — закуп.: {p.PurchasePrice:C}, продаж.: {p.SalePrice:C}");
-                    }
-                    Console.Write("Введите ID детали для покупки: ");
-                    if (!int.TryParse(Console.ReadLine(), out int pid))
-                    {
-                        Console.WriteLine("Неверный ID.");
-                        continue;
-                    }
-                    Console.Write("Введите количество: ");
-                    if (!int.TryParse(Console.ReadLine(), out int qty) || qty <= 0)
-                    {
-                        Console.WriteLine("Неверное количество.");
-                        continue;
-                    }
-
-                    var selected = db.GetPartById(pid);
-                    if (selected == null)
-                    {
-                        Console.WriteLine("Деталь не найдена.");
-                        continue;
-                    }
-
-                    decimal totalCost = selected.PurchasePrice * qty;
-                    if (balance < totalCost)
-                    {
-                        Console.WriteLine($"Недостаточно средств (нужно {totalCost:C}, у вас {balance:C}).");
-                        continue;
-                    }
-
-                    balance -= totalCost;
-                    db.InsertGameState(balance);
-                    db.AddTransaction(-totalCost, "PurchaseExpense", $"Закупка {selected.Name} x{qty}");
-                    db.IncreaseInventory(selected.PartId, qty);
-                    Console.WriteLine($"Куплено {qty} шт. {selected.Name}. Баланс: {balance:C}");
-                }
-                else if (choice == "0")
-                {
-                    Console.WriteLine("Выход. До свидания!");
-                    break;
+                    if (choice == "1") ShowProducts();  
+                    else if (choice == "2") Register();
+                    else if (choice == "3") Login();
+                    else if (choice == "0") break;
                 }
                 else
                 {
-                    Console.WriteLine("Неверный выбор.");
+                    Console.WriteLine($"Личный кабинет {currentUser.Username}");
+                    Console.WriteLine("1. Посмотреть товары");
+                    Console.WriteLine("2. Добавить товар в корзину");
+                    Console.WriteLine("3. Посмотреть корзину");
+                    Console.WriteLine("4. Купить товар из корзины");
+                    Console.WriteLine("5. Купить всю корзину");
+                    Console.WriteLine("6. История заказов");
+                    Console.WriteLine("7. Выйти из аккаунта");
+                    Console.Write("Выбор: ");
+
+                    string choice = Console.ReadLine();
+
+                    if (choice == "1") ShowProducts();
+                    else if (choice == "2") AddToCart();
+                    else if (choice == "3") ShowCart();
+                    else if (choice == "4") BuyOne();
+                    else if (choice == "5") BuyAll();
+                    else if (choice == "6") ShowOrders();
+                    else if (choice == "7") currentUser = null;
                 }
+
+                Console.WriteLine("Нажмите любую клавишу...");
+                Console.ReadKey();
+                Console.Clear();
             }
         }
 
-        static bool IsYes(string input)
+        static void Register()
         {
-            if (string.IsNullOrWhiteSpace(input)) return false;
-            var s = input.Trim().ToLowerInvariant();
-            return s == "y" | s == "yes" || s == "да";
+            Console.Write("Введите логин: ");
+            string username = Console.ReadLine();
+
+            Console.Write("Введите пароль: ");
+            string password = Console.ReadLine();
+
+            bool success = db.RegisterUser(username, password);
+            if (success)
+                Console.WriteLine("Регистрация успешна!");
+            else
+                Console.WriteLine("Ошибка регистрации (пользователь уже существует или данные некорректны).");
         }
 
-
-        static void ApplyPenalty(DbHelper db, ref decimal balance, decimal penalty)
+        static void Login()
         {
-            balance -= penalty;
-            db.InsertGameState(balance);
-            db.AddTransaction(-penalty, "PenaltyExpense", "Отказ клиенту / неудача ремонта");
-            Console.WriteLine($"Штраф {penalty:C} применён. Баланс: {balance:C}");
+            Console.Write("Логин: ");
+            string username = Console.ReadLine();
+
+            Console.Write("Пароль: ");
+            string password = Console.ReadLine();
+
+            currentUser = db.Login(username, password);
+
+            if (currentUser == null)
+                Console.WriteLine("Неверный логин или пароль!");
+            else
+                Console.WriteLine("Успешный вход!");
+        }
+
+        static void ShowProducts()
+        {
+            List<Product> products = db.GetAllProducts();
+            Console.WriteLine("Товары");
+
+            foreach (Product p in products)
+            {
+                Console.WriteLine("{0}. {1} — {2} руб. (Остаток: {3})", p.Id, p.Name, p.Price, p.Stock);
+            }
+        }
+
+        static void AddToCart()
+        {
+            Console.Write("Введите ID товара: ");
+            int productId;
+            if (!int.TryParse(Console.ReadLine(), out productId))
+            {
+                Console.WriteLine("Ошибка!");
+                return;
+            }
+
+            Console.Write("Введите количество: ");
+            int quantity;
+            if (!int.TryParse(Console.ReadLine(), out quantity))
+            {
+                Console.WriteLine("Ошибка!");
+                return;
+            }
+
+            bool added = db.AddToCart(currentUser.Id, productId, quantity);
+            Console.WriteLine(added ? "Товар добавлен в корзину!" : "Не удалось добавить товар (не хватает на складе или ошибка).");
+        }
+
+        static void ShowCart()
+        {
+            List<CartItem> cart = db.GetUserCart(currentUser.Id);
+            Console.WriteLine("Корзина");
+
+            if (cart.Count == 0)
+            {
+                Console.WriteLine("Корзина пуста!");
+                return;
+            }
+
+            foreach (CartItem item in cart)
+            {
+                Console.WriteLine("{0}. {1} — {2} руб., Кол-во: {3}",
+                    item.ProductId, item.ProductName, item.ProductPrice, item.Quantity);
+            }
+        }
+
+        static int ChoosePickupPoint()
+        {
+            List<PickupPoint> points = db.GetAllPickupPoints();
+            Console.WriteLine("Выберите пункт выдачи");
+
+            foreach (PickupPoint p in points)
+            {
+                Console.WriteLine("{0}. {1}, {2}", p.Id, p.Name, p.Address);
+            }
+
+            Console.Write("Выбор: ");
+            int id;
+            if (!int.TryParse(Console.ReadLine(), out id)) return -1;
+            return id;
+        }
+
+        static void BuyOne()
+        {
+            List<CartItem> cart = db.GetUserCart(currentUser.Id);
+            if (cart.Count == 0) { Console.WriteLine("Корзина пуста!"); return; }
+
+            Console.Write("Введите ID товара для покупки: ");
+            int productId;
+            if (!int.TryParse(Console.ReadLine(), out productId)) return;
+
+            CartItem item = cart.Find(c => c.ProductId == productId);
+            if (item == null) { Console.WriteLine("Нет такого товара в корзине!"); return; }
+
+            int pvzId = ChoosePickupPoint();
+            if (pvzId == -1) return;
+
+            if (db.CreateOrder(currentUser.Id, pvzId, new List<CartItem>() { item }))
+                Console.WriteLine("Товар куплен!");
+            else
+                Console.WriteLine("Ошибка при покупке товара.");
+        }
+
+        static void BuyAll()
+        {
+            List<CartItem> cart = db.GetUserCart(currentUser.Id);
+            if (cart.Count == 0) { Console.WriteLine("Корзина пуста!"); return; }
+
+            int pvzId = ChoosePickupPoint();
+            if (pvzId == -1) return;
+
+            if (db.CreateOrder(currentUser.Id, pvzId, cart))
+                Console.WriteLine("Вся корзина куплена!");
+            else
+                Console.WriteLine("Ошибка при покупке корзины.");
+        }
+
+        static void ShowOrders()
+        {
+            List<Order> orders = db.GetUserOrders(currentUser.Id);
+            List<PickupPoint> pickupPoints = db.GetAllPickupPoints(); 
+            var pickupDict = new Dictionary<int, string>();
+            foreach (var p in pickupPoints)
+                pickupDict[p.Id] = p.Address; 
+
+            Console.WriteLine("История заказов");
+
+            foreach (Order o in orders)
+            {
+                string address = pickupDict.ContainsKey(o.PickupPointId) ? pickupDict[o.PickupPointId] : "Неизвестно";
+                Console.WriteLine("Заказ {0}, Сумма: {1} руб., ПВЗ: {2} ({3}), Дата: {4}",
+                    o.Id, o.TotalPrice, o.PickupPointId, address, o.CreatedAt);
+
+                foreach (OrderItem item in o.Items)
+                {
+                    Console.WriteLine(" - {0} — {1} руб., Кол-во: {2}", item.ProductName, item.UnitPrice, item.Quantity);
+                }
+            }
         }
     }
-
-    class DbHelper
-    {
-        private readonly string _cs;
-        public DbHelper(string connectionString) { _cs = connectionString; }
-
-        public decimal GetBalance()
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = "SELECT TOP(1) Balance FROM GameState ORDER BY GameStateId DESC";
-                c.Open();
-                var r = cmd.ExecuteScalar();
-                return r == null || r == DBNull.Value ? 0m : Convert.ToDecimal(r);
-            }
-        }
-
-        public void InsertGameState(decimal balance)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = "INSERT INTO GameState (Balance) VALUES (@b)";
-                cmd.Parameters.AddWithValue("@b", balance);
-                c.Open();
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        public List<InventoryRow> GetInventory()
-        {
-            var list = new List<InventoryRow>();
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = @"SELECT i.PartId, p.Name, i.Quantity
-                                    FROM InventoryItems i
-                                    JOIN Parts p ON i.PartId = p.PartId
-                                    ORDER BY p.Name";
-                c.Open();
-                using (var r = cmd.ExecuteReader())
-                {
-                    while (r.Read())
-                    {
-                        list.Add(new InventoryRow
-                        {
-                            PartId = r.GetInt32(0),
-                            PartName = r.GetString(1),
-                            Quantity = r.GetInt32(2)
-                        });
-                    }
-                }
-            }
-            return list;
-        }
-
-        public InventoryRow GetInventoryItemByPartId(int partId)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = @"SELECT i.PartId, p.Name, i.Quantity
-                                    FROM InventoryItems i
-                                    JOIN Parts p ON i.PartId = p.PartId
-                                    WHERE i.PartId = @pid";
-                cmd.Parameters.AddWithValue("@pid", partId);
-                c.Open();
-                using (var r = cmd.ExecuteReader())
-                {
-                    if (r.Read())
-                    {
-                        return new InventoryRow
-                        {
-                            PartId = r.GetInt32(0),
-                            PartName = r.GetString(1),
-                            Quantity = r.GetInt32(2)
-                        };
-                    }
-                }
-            }
-            return null;
-        }
-
-        public void DecreaseInventory(int partId, int qty)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = @"UPDATE InventoryItems SET Quantity = CASE WHEN Quantity>=@q THEN Quantity-@q ELSE 0 END WHERE PartId=@pid";
-                cmd.Parameters.AddWithValue("@q", qty);
-                cmd.Parameters.AddWithValue("@pid", partId);
-                c.Open();
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        public void IncreaseInventory(int partId, int qty)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = @"
-                    IF EXISTS(SELECT 1 FROM InventoryItems WHERE PartId=@pid)
-                        UPDATE InventoryItems SET Quantity = Quantity + @q WHERE PartId=@pid
-                    ELSE
-                        INSERT INTO InventoryItems (PartId, Quantity) VALUES(@pid, @q)";
-                cmd.Parameters.AddWithValue("@q", qty);
-                cmd.Parameters.AddWithValue("@pid", partId);
-                c.Open();
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        public List<PartRow> GetAllParts()
-        {
-            return GetAllPartsInternal("SELECT PartId, Name, PurchasePrice, SalePrice FROM Parts ORDER BY Name");
-        }
-
-        public List<PartRow> GetAllPartsSimple() => GetAllParts();
-
-        private List<PartRow> GetAllPartsInternal(string sql)
-        {
-            var list = new List<PartRow>();
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = sql;
-                c.Open();
-                using (var r = cmd.ExecuteReader())
-                {
-                    while (r.Read())
-                    {
-                        list.Add(new PartRow
-                        {
-                            PartId = r.GetInt32(0),
-                            Name = r.GetString(1),
-                            PurchasePrice = r.GetDecimal(2),
-                            SalePrice = r.GetDecimal(3)
-                        });
-                    }
-                }
-            }
-            return list;
-        }
-
-        public PartRow GetPartById(int id)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = "SELECT PartId, Name, PurchasePrice, SalePrice FROM Parts WHERE PartId=@id";
-                cmd.Parameters.AddWithValue("@id", id);
-                c.Open();
-                using (var r = cmd.ExecuteReader())
-                {
-                    if (r.Read())
-                    {
-                        return new PartRow
-                        {
-                            PartId = r.GetInt32(0),
-                            Name = r.GetString(1),
-                            PurchasePrice = r.GetDecimal(2),
-                            SalePrice = r.GetDecimal(3)
-                        };
-                    }
-                }
-            }
-            return null;
-        }
-
-        public void AddTransaction(decimal amount, string type, string desc)
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = "INSERT INTO Transactions (DateCreated, Amount, Type, Description) VALUES (SYSUTCDATETIME(), @a, @t, @d)";
-                cmd.Parameters.AddWithValue("@a", amount);
-                cmd.Parameters.AddWithValue("@t", type);
-                cmd.Parameters.AddWithValue("@d", desc ?? (object)DBNull.Value);
-                c.Open();
-                cmd.ExecuteNonQuery();
-            }
-        }
-
-        public CarRow GetRandomCar()
-        {
-            using (var c = new SqlConnection(_cs))
-            using (var cmd = c.CreateCommand())
-            {
-                cmd.CommandText = @"
-                    SELECT TOP 1 c.CarId, c.Model, c.LicensePlate, c.BrokenPartId, p.Name AS BrokenPartName, c.RepairPrice
-                    FROM Cars c
-                    JOIN Parts p ON c.BrokenPartId = p.PartId
-                    ORDER BY NEWID()";
-                c.Open();
-                using (var r = cmd.ExecuteReader())
-                {
-                    if (r.Read())
-                    {
-                        return new CarRow
-                        {
-                            CarId = r.GetInt32(0),
-                            Model = r.GetString(1),
-                            LicensePlate = r.GetString(2),
-                            BrokenPartId = r.GetInt32(3),
-                            BrokenPartName = r.GetString(4),
-                            RepairPrice = r.GetDecimal(5)
-                        };
-                    }
-                }
-            }
-            return null;
-        }
-    }
-
-    class InventoryRow { public int PartId; public string PartName; public int Quantity; }
-    class PartRow { public int PartId; public string Name; public decimal PurchasePrice; public decimal SalePrice; }
-    class CarRow { public int CarId; public string Model; public string LicensePlate; public int BrokenPartId; public string BrokenPartName; public decimal RepairPrice; }
 }
